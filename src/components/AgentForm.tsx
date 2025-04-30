@@ -4,11 +4,11 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+// Removed Card imports
 import { Loader2 } from 'lucide-react'; // Use lucide loader icon
 
 interface AgentFormProps {
-  onSubmit: (data: { input: string }) => Promise<void>; // Specify the expected data structure
+  onSubmit: (data: { instruction: string }) => Promise<void>; // Corrected data structure to instruction
   isLoading: boolean;
 }
 
@@ -17,49 +17,37 @@ const AgentForm: React.FC<AgentFormProps> = ({ onSubmit, isLoading }) => {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    await onSubmit({ input: inputValue });
-    // Optionally clear input after submit: setInputValue('');
+    if (!inputValue.trim()) return; // Prevent sending empty messages
+    await onSubmit({ instruction: inputValue }); // Pass instruction instead of input
+    setInputValue(''); // Clear input after submit
   };
 
   return (
-    <Card className="w-full shadow-md">
-      <form onSubmit={handleSubmit}>
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold text-primary">Enviar Mensaje al Agente</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="agentInput" className="text-foreground/80">Tu Instrucción:</Label>
-            <Input
-              id="agentInput"
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Escribe tu mensaje aquí..."
-              className="focus-visible:ring-primary" // Use primary color for focus ring
-              disabled={isLoading}
-              required // Make input required
-            />
-          </div>
-        </CardContent>
-        <CardFooter>
-          <Button
-            type="submit"
-            className="w-full bg-accent hover:bg-accent/90 text-accent-foreground transition-colors duration-200 focus-visible:ring-ring" // Use accent for button
-            disabled={isLoading || !inputValue.trim()} // Disable if loading or input is empty/whitespace
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Enviando...
-              </>
-            ) : (
-              'Enviar a N8n'
-            )}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
+    <form onSubmit={handleSubmit} className="flex items-center space-x-2 p-4 bg-background/70 rounded-md border">
+      {/* Removed Card, CardHeader, CardContent, CardFooter */}
+      {/* Removed Label and div.space-y-2 for simpler chat input */}
+      <Input
+        id="agentInput"
+        type="text"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        placeholder="Escribe tu mensaje aquí..."
+        className="flex-grow focus-visible:ring-primary" // Use primary color for focus ring, flex-grow to fill space
+        disabled={isLoading}
+        required // Keep input required
+      />
+      <Button
+        type="submit"
+        className="bg-accent hover:bg-accent/90 text-accent-foreground transition-colors duration-200 focus-visible:ring-ring flex-shrink-0" // Use accent for button, flex-shrink-0 to prevent shrinking
+        disabled={isLoading || !inputValue.trim()} // Disable if loading or input is empty/whitespace
+      >
+        {isLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin" /> // Only show loader icon in button
+        ) : (
+          'Enviar' // Simpler button text
+        )}
+      </Button>
+    </form>
   );
 };
 

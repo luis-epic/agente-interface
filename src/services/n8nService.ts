@@ -3,7 +3,8 @@
  * For now, assumes a simple object with a text input.
  */
 export interface N8NInputData {
-  input: string;
+  instruction: string; // Changed from input to instruction to match AgentForm
+  sessionId: string; // Added sessionId
   [key: string]: any; // Allow for other potential fields
 }
 

@@ -1,38 +1,89 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
-import WebhookDisplay from '@/components/WebhookDisplay';
+import React, { useState, useCallback, useEffect, useRef } from 'react'; // Imported useEffect and useRef
 import AgentForm from '@/components/AgentForm';
-import ResponseDisplay from '@/components/ResponseDisplay';
 import { sendDataToN8N, extractN8NResponseText } from '@/services/n8nService';
 import type { N8NInputData, N8NSuccessResponse, N8NErrorResponse } from '@/services/n8nService';
 import { useToast } from '@/hooks/use-toast';
-import { Bot } from 'lucide-react'; // Using Bot icon for title
+import { Box, AlertCircle, User } from 'lucide-react'; // Changed Bot to Box, imported AlertCircle for error messages, Imported User for user icon
 
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [agentResponse, setAgentResponse] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<Array<{type: 'user' | 'agent', message: string}>>([]); // State for chat history
+  const [sessionId, setSessionId] = useState<string | null>(null); // State for session ID
+  const chatEndRef = useRef<HTMLDivElement>(null); // Ref for scrolling to the bottom
+
   const { toast } = useToast();
 
-  const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || 'https://luis-epico.app.n8n.cloud/webhook-test/input'; // Use environment variable or default
+  // Generate a session ID when the component mounts
+  useEffect(() => {
+    // Basic unique ID generation
+    const uniqueId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    setSessionId(uniqueId);
+  }, []); // Empty dependency array means this runs once on mount
 
-  const handleFormSubmit = useCallback(async (data: N8NInputData) => {
+  // Scroll to bottom whenever chat history updates
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, isLoading, error]); // Add isLoading and error to dependencies to scroll during loading/error
+
+  // Webhook URL is now fixed or from env, not displayed/editable in UI
+  const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || 'https://luis-epico.app.n8n.cloud/webhook-test/input'; // Use environment variable or the new test URL as fallback
+
+  const handleFormSubmit = useCallback(async (data: { instruction: string }) => {
+    if (!sessionId) {
+        console.error("Session ID not generated yet.");
+        // Optionally show an error to the user
+        toast({
+          title: "Error de Sesión",
+          description: "No se pudo generar un ID de sesión. Por favor, refresca la página.",
+          variant: "destructive",
+        });
+        return;
+    }
+
     setIsLoading(true);
-    setAgentResponse(null);
-    setError(null);
+    setError(null); // Clear previous error on new submission
 
-    const result = await sendDataToN8N(webhookUrl, data);
+    // Add user message to chat history
+    setChatHistory(prevHistory => [...prevHistory, { type: 'user', message: data.instruction }]);
+
+    // Prepare data to send, including the session ID
+    const dataToSend: N8NInputData = {
+        instruction: data.instruction,
+        sessionId: sessionId, // Include session ID here
+    };
+
+    const result = await sendDataToN8N(webhookUrl, dataToSend);
 
     if ('error' in result) { // Check if it's an N8NErrorResponse
       const errorResult = result as N8NErrorResponse;
       console.error('N8N Error:', errorResult);
-      const errorMessage = `${errorResult.message}${errorResult.details ? ` Details: ${typeof errorResult.details === 'string' ? errorResult.details : JSON.stringify(errorResult.details)}` : ''}`;
-      setError(errorMessage);
+      // Construct a user-friendly error message
+      let userErrorMessage = "Hubo un problema al contactar al agente.";
+      if (errorResult.message.includes('Failed to send data')) {
+          userErrorMessage = "No se pudo conectar con el servicio. Verifica tu conexión o la URL del webhook.";
+      } else if (errorResult.message) {
+          userErrorMessage = `Error del servicio: ${errorResult.message}`;
+      }
+      // Add detailed info if available, but keep it concise for the user
+      if (errorResult.details && typeof errorResult.details === 'string' && errorResult.details !== errorResult.message) {
+          userErrorMessage += ` Detalles: ${errorResult.details}`;
+      } else if (errorResult.details && typeof errorResult.details === 'object') {
+           // Avoid showing complex objects directly
+           userErrorMessage += ` (Más detalles en consola)`;
+      }
+
+      setError(userErrorMessage); // Set the refined error message for display
+       // Add error message to chat history (as agent response type to display in chat flow)
+      // No longer adding technical error details directly to chat history
+      // setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Error: ${userErrorMessage}` }]);
+
       toast({
         title: "Error interactuando con N8n",
-        description: errorResult.message, // Show concise message in toast
+        description: errorResult.message, // Keep concise technical message in toast for developers
         variant: "destructive",
       });
     } else {
@@ -41,16 +92,24 @@ export default function Home() {
       const extractedText = extractN8NResponseText(successResult);
 
       if (extractedText) {
-        setAgentResponse(extractedText);
-        toast({
-          title: "¡Éxito!",
-          description: "Respuesta recibida de N8n.",
-          variant: "default", // Use default variant for success
-        });
+         // Add agent response to chat history
+        setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: extractedText }]);
+        // Removed success toast for less interruption
+        // toast({
+        //   title: "¡Éxito!",
+        //   description: "Respuesta recibida de N8n.",
+        //   variant: "default", // Use default variant for success
+        // });
       } else {
          // Handle cases where the response format is unexpected but not technically an error
          console.warn('N8n response received, but no standard text field (message/output/text) found.', successResult);
-         setAgentResponse(JSON.stringify(successResult, null, 2)); // Show raw JSON as fallback
+         const fallbackMessage = JSON.stringify(successResult, null, 2);
+          // Add fallback message to chat history
+         setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Respuesta no estándar:
+\`\`\`json
+${fallbackMessage}
+\`\`\`` }]);
+
          toast({
              title: "Respuesta Recibida",
              description: "Formato de respuesta no estándar, mostrando datos crudos.",
@@ -60,31 +119,75 @@ export default function Home() {
     }
 
     setIsLoading(false);
-  }, [webhookUrl, toast]); // Add dependencies
+  }, [webhookUrl, toast, sessionId]); // Added sessionId to dependencies
 
   return (
     <main className="flex flex-col items-center min-h-screen p-4 sm:p-8 md:p-12 lg:p-16 bg-gradient-to-br from-secondary via-background to-primary/10">
-      <div className="w-full max-w-2xl space-y-8">
+      {/* Increased max-width and adjusted vertical height calculation */}
+      <div className="w-full max-w-3xl space-y-4 flex flex-col h-[calc(100vh-4rem)]"> {/* Reduced bottom padding effect */}
 
-        <div className="text-center space-y-2">
-           <Bot className="mx-auto h-12 w-12 text-primary" />
+        <div className="text-center space-y-2 flex-shrink-0 pt-4"> {/* Added padding top */}
+           <Box className="mx-auto h-12 w-12 text-primary" /> {/* Changed icon to Box */}
            <h1 className="text-3xl sm:text-4xl font-bold text-primary tracking-tight">
-             N8N Agent Interface
+             Code epico {/* Changed title */}
            </h1>
            <p className="text-muted-foreground">
-             Interactúa con tu workflow de N8N fácilmente.
+             IA epic {/* Changed subtitle */}
            </p>
         </div>
 
+        {/* Chat history display area */}
+        {/* Added ScrollArea for better scrollbar styling */}
+        <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-background/50 rounded-md border scroll-smooth">
+          {chatHistory.map((msg, index) => (
+            <div key={index} className={`flex items-start space-x-3 ${msg.type === 'user' ? 'justify-end' : ''}`}>
+              {msg.type === 'agent' && (
+                 <div className="flex-shrink-0 pt-1">
+                   <Box className="h-6 w-6 text-primary" /> {/* Changed icon to Box for agent messages */}
+                 </div>
+              )}
+              {/* Message Bubble */}
+              <div className={`p-3 rounded-xl max-w-[80%] shadow-sm ${msg.type === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-card text-card-foreground rounded-bl-sm'}`}>
+                <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p> {/* Added break-words */}
+              </div>
+              {msg.type === 'user' && (
+                 <div className="flex-shrink-0 pt-1">
+                    {/* Using a simple User icon for user messages */}
+                    <User className="h-6 w-6 text-muted-foreground" />
+                 </div>
+              )}
+            </div>
+          ))}
+           {isLoading && (
+             <div className="flex items-start space-x-3 animate-fade-in">
+                 <div className="flex-shrink-0 pt-1">
+                   <Box className="h-6 w-6 text-primary animate-pulse" /> {/* Changed loading icon animation */}
+                 </div>
+                 <div className="p-3 rounded-lg bg-card text-card-foreground max-w-[80%] shadow-sm"> {/* Matched agent bubble style */}
+                    {/* Typing indicator with dots */}
+                    <p className="text-sm">
+                      Escribiendo<span className="animate-[pulse_1s_ease-in-out_infinite]">.</span><span className="animate-[pulse_1s_ease-in-out_0.2s_infinite]">.</span><span className="animate-[pulse_1s_ease-in-out_0.4s_infinite]">.</span>
+                    </p>
+                 </div>
+             </div>
+           )}
+           {/* Error message display within chat history area but styled differently */}
+            {error && !isLoading && ( // Only show if not loading
+                 <div className="flex items-center justify-center space-x-2 p-2 bg-destructive/10 text-destructive rounded-md border border-destructive/30 animate-fade-in">
+                    <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                    <p className="text-sm text-center">{error}</p>
+                 </div>
+            )}
+            {/* Invisible element to mark the end for scrolling */}
+            <div ref={chatEndRef} />
+        </div>
 
-        <WebhookDisplay webhookUrl={webhookUrl} />
 
-        <AgentForm onSubmit={handleFormSubmit} isLoading={isLoading} />
+        {/* Input form at the bottom */}
+        <div className="flex-shrink-0 pb-4"> {/* Added padding bottom */}
+           <AgentForm onSubmit={handleFormSubmit} isLoading={isLoading} />
+        </div>
 
-        {/* Conditionally render ResponseDisplay based on loading, error, or response */}
-        {(isLoading || error || agentResponse !== null) && (
-            <ResponseDisplay response={agentResponse} error={error} isLoading={isLoading} />
-        )}
 
       </div>
     </main>
