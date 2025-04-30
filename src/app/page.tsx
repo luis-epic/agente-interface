@@ -1,28 +1,36 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react'; // Imported useEffect and useRef
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import AgentForm from '@/components/AgentForm';
 import { sendDataToN8N, extractN8NResponseText } from '@/services/n8nService';
 import type { N8NInputData, N8NSuccessResponse, N8NErrorResponse } from '@/services/n8nService';
 import { useToast } from '@/hooks/use-toast';
-import { Box, AlertCircle, User } from 'lucide-react'; // Changed Bot to Box, imported AlertCircle for error messages, Imported User for user icon
+import { Box, AlertCircle, User } from 'lucide-react';
 
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [chatHistory, setChatHistory] = useState<Array<{type: 'user' | 'agent', message: string}>>([]); // State for chat history
+  const [chatHistory, setChatHistory] = useState<Array<{type: 'user' | 'agent', message: string}>>([]); // Initialize empty
   const [sessionId, setSessionId] = useState<string | null>(null); // State for session ID
   const chatEndRef = useRef<HTMLDivElement>(null); // Ref for scrolling to the bottom
 
   const { toast } = useToast();
 
-  // Generate a session ID when the component mounts
+  // Generate session ID and set initial message when the component mounts
   useEffect(() => {
-    // Basic unique ID generation
-    const uniqueId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    setSessionId(uniqueId);
-  }, []); // Empty dependency array means this runs once on mount
+    // Generate session ID only if it doesn't exist
+    if (!sessionId) {
+      const uniqueId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+      setSessionId(uniqueId);
+      // Add initial agent greeting message only once when sessionId is set
+      setChatHistory([{
+        type: 'agent',
+        message: '¡Hola! ¿En qué puedo ayudarte hoy? Escribe tu consulta a continuación.' // Corrected initial message
+      }]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run once on mount
+  }, []); // Empty dependency array ensures this runs only once
 
   // Scroll to bottom whenever chat history updates
   useEffect(() => {
@@ -35,7 +43,6 @@ export default function Home() {
   const handleFormSubmit = useCallback(async (data: { instruction: string }) => {
     if (!sessionId) {
         console.error("Session ID not generated yet.");
-        // Optionally show an error to the user
         toast({
           title: "Error de Sesión",
           description: "No se pudo generar un ID de sesión. Por favor, refresca la página.",
@@ -43,6 +50,8 @@ export default function Home() {
         });
         return;
     }
+    // Prevent sending if already loading
+    if (isLoading) return;
 
     setIsLoading(true);
     setError(null); // Clear previous error on new submission
@@ -57,6 +66,8 @@ export default function Home() {
     };
 
     const result = await sendDataToN8N(webhookUrl, dataToSend);
+
+    setIsLoading(false); // Set loading false *after* receiving response
 
     if ('error' in result) { // Check if it's an N8NErrorResponse
       const errorResult = result as N8NErrorResponse;
@@ -74,16 +85,16 @@ export default function Home() {
       } else if (errorResult.details && typeof errorResult.details === 'object') {
            // Avoid showing complex objects directly
            userErrorMessage += ` (Más detalles en consola)`;
+      } else if (typeof errorResult.details === 'string') {
+           userErrorMessage += ` Detalles: ${errorResult.details}`; // Show string details
       }
 
+
       setError(userErrorMessage); // Set the refined error message for display
-       // Add error message to chat history (as agent response type to display in chat flow)
-      // No longer adding technical error details directly to chat history
-      // setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Error: ${userErrorMessage}` }]);
 
       toast({
         title: "Error interactuando con N8n",
-        description: errorResult.message, // Keep concise technical message in toast for developers
+        description: userErrorMessage, // Show user-friendly message in toast
         variant: "destructive",
       });
     } else {
@@ -94,21 +105,12 @@ export default function Home() {
       if (extractedText) {
          // Add agent response to chat history
         setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: extractedText }]);
-        // Removed success toast for less interruption
-        // toast({
-        //   title: "¡Éxito!",
-        //   description: "Respuesta recibida de N8n.",
-        //   variant: "default", // Use default variant for success
-        // });
       } else {
          // Handle cases where the response format is unexpected but not technically an error
          console.warn('N8n response received, but no standard text field (message/output/text) found.', successResult);
          const fallbackMessage = JSON.stringify(successResult, null, 2);
           // Add fallback message to chat history
-         setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Respuesta no estándar:
-\`\`\`json
-${fallbackMessage}
-\`\`\`` }]);
+         setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Respuesta no estándar:\n\`\`\`json\n${fallbackMessage}\n\`\`\`` }]);
 
          toast({
              title: "Respuesta Recibida",
@@ -118,8 +120,7 @@ ${fallbackMessage}
       }
     }
 
-    setIsLoading(false);
-  }, [webhookUrl, toast, sessionId]); // Added sessionId to dependencies
+  }, [webhookUrl, toast, sessionId, isLoading]); // Added isLoading to dependencies
 
   return (
     <main className="flex flex-col items-center min-h-screen p-4 sm:p-8 md:p-12 lg:p-16 bg-gradient-to-br from-secondary via-background to-primary/10">
@@ -137,7 +138,6 @@ ${fallbackMessage}
         </div>
 
         {/* Chat history display area */}
-        {/* Added ScrollArea for better scrollbar styling */}
         <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-background/50 rounded-md border scroll-smooth">
           {chatHistory.map((msg, index) => (
             <div key={index} className={`flex items-start space-x-3 ${msg.type === 'user' ? 'justify-end' : ''}`}>
@@ -148,7 +148,8 @@ ${fallbackMessage}
               )}
               {/* Message Bubble */}
               <div className={`p-3 rounded-xl max-w-[80%] shadow-sm ${msg.type === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-card text-card-foreground rounded-bl-sm'}`}>
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p> {/* Added break-words */}
+                {/* Use pre-wrap to respect newlines and break-words for long text */}
+                <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
               </div>
               {msg.type === 'user' && (
                  <div className="flex-shrink-0 pt-1">
