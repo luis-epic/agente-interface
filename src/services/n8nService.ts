@@ -17,6 +17,7 @@ export interface N8NSuccessResponse {
   output?: string;
   text?: string;
   data?: any; // Catch-all for other data structures
+  sessionId?: string; // Explicitly define sessionId to easily delete it later
   [key: string]: any; // Allow flexibility
 }
 
@@ -49,6 +50,7 @@ export async function sendDataToN8N(
   data: N8NInputData
 ): Promise<N8NSuccessResponse | N8NErrorResponse> {
   console.log(`Attempting to send data to N8N webhook: ${webhookUrl}`);
+  console.log(`Sending data with Session ID: ${data.sessionId}`); // Log session ID being sent
   try {
     const response = await fetch(webhookUrl, {
       method: 'POST',
@@ -145,7 +147,7 @@ export async function sendDataToN8N(
 /**
 * Extracts a meaningful text response from the N8N success data.
 * Prioritizes common fields like 'message', 'output', 'text'.
-* Falls back to stringifying the whole data object if no specific field is found.
+* Explicitly removes the 'sessionId' field before falling back to stringifying the data.
 *
 * @param responseData The data received from a successful N8N webhook call.
 * @returns A string representation of the response, or null if data is empty/undefined.
@@ -155,47 +157,72 @@ export function extractN8NResponseText(responseData: N8NSuccessResponse | null |
         return null;
     }
 
-    // Check specific fields first
-    if (typeof responseData.message === 'string' && responseData.message.trim() !== '') {
-        return responseData.message;
+    // Create a copy to modify without affecting the original object potentially used elsewhere
+    const dataToProcess = { ...responseData };
+
+    // --- Explicitly remove sessionId before checking other fields ---
+    if (dataToProcess.sessionId !== undefined) {
+        console.log("Removing sessionId from N8N response before display.");
+        delete dataToProcess.sessionId;
     }
-    if (typeof responseData.output === 'string' && responseData.output.trim() !== '') {
-        return responseData.output;
+    // ---
+
+    // Check specific fields first (using the modified dataToProcess)
+    if (typeof dataToProcess.message === 'string' && dataToProcess.message.trim() !== '') {
+        // Filter out the specific unwanted message about session ID
+        if (dataToProcess.message.includes("Parece que has compartido un identificador de sesión")) {
+            console.log("Filtering out session ID mention message from N8N.");
+            return null; // Return null or a placeholder like "..."
+        }
+        return dataToProcess.message;
     }
-    if (typeof responseData.text === 'string' && responseData.text.trim() !== '') {
-        return responseData.text;
+    if (typeof dataToProcess.output === 'string' && dataToProcess.output.trim() !== '') {
+         if (dataToProcess.output.includes("Parece que has compartido un identificador de sesión")) {
+            console.log("Filtering out session ID mention message from N8N.");
+            return null;
+         }
+        return dataToProcess.output;
+    }
+    if (typeof dataToProcess.text === 'string' && dataToProcess.text.trim() !== '') {
+         if (dataToProcess.text.includes("Parece que has compartido un identificador de sesión")) {
+            console.log("Filtering out session ID mention message from N8N.");
+            return null;
+         }
+        return dataToProcess.text;
     }
 
     // Fallback: Handle potential non-string but present values in common fields
-    if (responseData.message) return String(responseData.message);
-    if (responseData.output) return String(responseData.output);
-    if (responseData.text) return String(responseData.text);
+    if (dataToProcess.message) return String(dataToProcess.message);
+    if (dataToProcess.output) return String(dataToProcess.output);
+    if (dataToProcess.text) return String(dataToProcess.text);
 
-
-    // Fallback: Stringify the whole object if no primary field found, but avoid if empty
-    const keys = Object.keys(responseData);
-    // Check if there's any actual data beyond potentially empty standard fields
-    const significantDataExists = keys.some(key =>
-        responseData[key] !== undefined && responseData[key] !== null && responseData[key] !== ''
-    );
+    // Fallback: Stringify the remaining object if no primary field found and data exists
+    const keys = Object.keys(dataToProcess);
+    const significantDataExists = keys.length > 0; // Simplified check since sessionId is already removed
 
     if (significantDataExists) {
        try {
-           // Exclude the sessionId from the stringified output if it's the only thing left
-           const dataToLog = { ...responseData };
-           // delete dataToLog.sessionId; // Optionally remove sessionId if you don't want it shown
-
-           // If after removing sessionId (if you do), there's nothing left, return null
-           if (Object.keys(dataToLog).length === 0) {
-               return null;
+           // If the only thing left is an empty object or similar non-displayable data, return null
+           const stringified = JSON.stringify(dataToProcess, null, 2);
+           if (stringified === '{}' || stringified === '[]' || stringified === '""' || stringified === 'null') {
+                return null;
            }
-
-           return JSON.stringify(dataToLog, null, 2); // Pretty print JSON
+            // Filter out the unwanted message even if it's part of a JSON structure
+           if (stringified.includes("Parece que has compartido un identificador de sesión")) {
+               console.log("Filtering out session ID mention message from N8N JSON fallback.");
+               return null; // Or maybe return a filtered JSON? For now, returning null.
+           }
+           return stringified; // Pretty print JSON
        } catch (e) {
-           return String(responseData); // Basic string conversion if JSON fails
+           // Basic string conversion if JSON fails, but unlikely now
+           const strRepresentation = String(dataToProcess);
+            if (strRepresentation.includes("Parece que has compartido un identificador de sesión")) {
+                console.log("Filtering out session ID mention message from N8N string fallback.");
+                return null;
+            }
+           return strRepresentation === '[object Object]' ? null : strRepresentation; // Avoid showing useless [object Object]
        }
     }
-
 
     // If no specific field found and no other significant data, return null
     return null;

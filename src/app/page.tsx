@@ -21,8 +21,10 @@ export default function Home() {
   useEffect(() => {
     if (!sessionId) {
       const uniqueId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-      console.log('Generated Session ID:', uniqueId); // Log session ID generation
+      console.log('SESSION: New Session ID Generated:', uniqueId); // Enhanced log
       setSessionId(uniqueId);
+    } else {
+      console.log('SESSION: Existing Session ID Found:', sessionId); // Log if session ID already exists
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run once on mount to generate ID
   }, []); // Empty dependency array ensures this runs only once on initial mount
@@ -31,6 +33,7 @@ export default function Home() {
   useEffect(() => {
     // Only add the initial message if we have a session ID and the chat is currently empty
     if (sessionId && chatHistory.length === 0) {
+        console.log('SESSION: Adding initial agent message for session:', sessionId); // Log adding initial message
       setChatHistory([{
         type: 'agent',
         message: '¡Hola! ¿En qué puedo ayudarte hoy? Escribe tu consulta a continuación.'
@@ -62,7 +65,8 @@ export default function Home() {
     }
 
     if (!sessionId) {
-        console.error("Session ID not generated yet.");
+        // This case should ideally not happen if Effect 1 runs correctly, but good to check.
+        console.error("SESSION ERROR: Attempted to submit but Session ID is null.");
         toast({
           title: "Error de Sesión",
           description: "No se pudo obtener un ID de sesión. Por favor, refresca la página.",
@@ -72,14 +76,17 @@ export default function Home() {
         return;
     }
     // Prevent sending if already loading
-    if (isLoading) return;
+    if (isLoading) {
+        console.warn("SUBMIT: Attempted to submit while already loading.");
+        return;
+    }
 
     setIsLoading(true);
     setError(null); // Clear previous error on new submission
 
     // Add user message to chat history
     setChatHistory(prevHistory => [...prevHistory, { type: 'user', message: data.instruction }]);
-    console.log('Sending data with Session ID:', sessionId); // Log session ID being sent
+    console.log(`SUBMIT: Sending instruction for Session ID: ${sessionId}`); // Log session ID being sent
 
     // Prepare data to send, including the session ID
     const dataToSend: N8NInputData = {
@@ -122,31 +129,25 @@ export default function Home() {
       });
     } else {
       const successResult = result as N8NSuccessResponse;
-      console.log('N8N Success Response:', successResult);
+      console.log('N8N Success Response Received (raw):', successResult); // Log raw success response
       const extractedText = extractN8NResponseText(successResult);
+      console.log('N8N Extracted Text:', extractedText); // Log extracted text
 
       if (extractedText) {
          // Add agent response to chat history
         setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: extractedText }]);
       } else {
-         // Handle cases where the response format is unexpected but not technically an error
-         console.warn('N8N response received, but no standard text field (message/output/text) found.', successResult);
-         // Check if the response contains the specific unwanted message
-         const unwantedMessage = "Parece que has compartido un identificador de sesión.";
-         if (JSON.stringify(successResult).includes(unwantedMessage)) {
-            console.log("Filtering out session ID message from N8N.");
-            // Optionally add a generic "Thinking..." or similar message instead of the raw output
-            // setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: 'Procesando...' }]);
-         } else {
-             const fallbackMessage = JSON.stringify(successResult, null, 2);
-              // Add fallback message to chat history only if it's not the unwanted session message
-             setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: `Respuesta no estándar:\n\`\`\`json\n${fallbackMessage}\n\`\`\`` }]);
-             toast({
-                 title: "Respuesta Recibida",
-                 description: "Formato de respuesta no estándar, mostrando datos crudos.",
-                 variant: "default",
-             });
-         }
+         // Handle cases where the response format is unexpected OR was filtered out (like the session ID message)
+         console.warn('N8N response received, but no displayable text extracted.', successResult);
+         // Optionally add a generic message if nothing useful came back
+         // setChatHistory(prevHistory => [...prevHistory, { type: 'agent', message: 'Recibido.' }]);
+         // No need to add fallback message if the unwanted message was intentionally filtered
+          toast({
+              title: "Respuesta Recibida",
+              description: "No se encontró texto para mostrar en la respuesta.",
+              variant: "default", // Changed from destructive as it's not strictly an error
+          });
+
       }
     }
 
